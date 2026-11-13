@@ -1,0 +1,7 @@
+/xray-waybar-ctl
+/dist/
+*.test
+*.out
+.idea/
+.vscode/
+CLAUDE.md

@@ -1,6 +1,7 @@
 package subscription
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -43,6 +44,7 @@ type clashProxy struct {
 	RealityOpts *clashReality `yaml:"reality-opts"`
 	WSOpts      *clashWS      `yaml:"ws-opts"`
 	GRPCOpts    *clashGRPC    `yaml:"grpc-opts"`
+	XHTTPOpts   *clashXHTTP   `yaml:"xhttp-opts"`
 }
 
 type clashReality struct {
@@ -58,6 +60,13 @@ type clashWS struct {
 
 type clashGRPC struct {
 	ServiceName string `yaml:"grpc-service-name"`
+}
+
+type clashXHTTP struct {
+	Path    string            `yaml:"path"`
+	Host    string            `yaml:"host"`
+	Mode    string            `yaml:"mode"`
+	Headers map[string]string `yaml:"headers"`
 }
 
 // parseClash maps a Clash YAML document into a list of servers. Empty
@@ -87,15 +96,15 @@ func clashToServer(p clashProxy) (server.Server, error) {
 		return server.Server{}, fmt.Errorf("missing server/port")
 	}
 	s := server.Server{
-		Name:        p.Name,
-		Protocol:    strings.ToLower(p.Type),
-		Address:     p.Server,
-		Port:        p.Port,
-		Network:     firstNonEmpty(p.Network, "tcp"),
-		Flow:        p.Flow,
-		SNI:         firstNonEmpty(p.SNI, p.Servername),
-		Fingerprint: p.Fingerprint,
-		ALPN:        p.ALPN,
+		Name:          p.Name,
+		Protocol:      strings.ToLower(p.Type),
+		Address:       p.Server,
+		Port:          p.Port,
+		Network:       firstNonEmpty(p.Network, "tcp"),
+		Flow:          p.Flow,
+		SNI:           firstNonEmpty(p.SNI, p.Servername),
+		Fingerprint:   p.Fingerprint,
+		ALPN:          p.ALPN,
 		AllowInsecure: p.SkipCertVerify,
 	}
 	if p.TLS {
@@ -117,6 +126,21 @@ func clashToServer(p clashProxy) (server.Server, error) {
 	}
 	if p.GRPCOpts != nil {
 		s.ServiceName = p.GRPCOpts.ServiceName
+	}
+	if s.Network == "xhttp" || s.Network == "splithttp" {
+		s.Network = "xhttp"
+		if p.XHTTPOpts != nil {
+			s.Path = p.XHTTPOpts.Path
+			s.Host = p.XHTTPOpts.Host
+			s.XHTTPMode = p.XHTTPOpts.Mode
+			if len(p.XHTTPOpts.Headers) > 0 {
+				headers, err := json.Marshal(p.XHTTPOpts.Headers)
+				if err != nil {
+					return server.Server{}, fmt.Errorf("xhttp headers: %w", err)
+				}
+				s.XHTTPExtra = map[string]json.RawMessage{"headers": headers}
+			}
+		}
 	}
 
 	switch s.Protocol {

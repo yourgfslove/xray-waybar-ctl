@@ -101,6 +101,9 @@ func parseVLESS(uri string) (server.Server, error) {
 	if v := q.Get("allowInsecure"); v == "1" || v == "true" {
 		s.AllowInsecure = true
 	}
+	if err := parseXHTTPOptions(&s, q.Get("mode"), q.Get("extra")); err != nil {
+		return server.Server{}, fmt.Errorf("vless: %w", err)
+	}
 	s.Name = u.Fragment // net/url already URL-decoded it
 	if s.Name == "" {
 		s.Name = s.Endpoint()
@@ -111,21 +114,23 @@ func parseVLESS(uri string) (server.Server, error) {
 // vmessURI is the JSON body packed inside `vmess://<base64-json>`.
 // Some clients use string types for numeric fields, so port/aid use any.
 type vmessURI struct {
-	V    string `json:"v"`
-	PS   string `json:"ps"`
-	Add  string `json:"add"`
-	Port any    `json:"port"`
-	ID   string `json:"id"`
-	Aid  any    `json:"aid"`
-	Scy  string `json:"scy"`
-	Net  string `json:"net"`
-	Type string `json:"type"`
-	Host string `json:"host"`
-	Path string `json:"path"`
-	TLS  string `json:"tls"`
-	SNI  string `json:"sni"`
-	ALPN string `json:"alpn"`
-	FP   string `json:"fp"`
+	V     string          `json:"v"`
+	PS    string          `json:"ps"`
+	Add   string          `json:"add"`
+	Port  any             `json:"port"`
+	ID    string          `json:"id"`
+	Aid   any             `json:"aid"`
+	Scy   string          `json:"scy"`
+	Net   string          `json:"net"`
+	Type  string          `json:"type"`
+	Host  string          `json:"host"`
+	Path  string          `json:"path"`
+	TLS   string          `json:"tls"`
+	SNI   string          `json:"sni"`
+	ALPN  string          `json:"alpn"`
+	FP    string          `json:"fp"`
+	Mode  string          `json:"mode"`
+	Extra json.RawMessage `json:"extra"`
 }
 
 func parseVMess(uri string) (server.Server, error) {
@@ -167,6 +172,16 @@ func parseVMess(uri string) (server.Server, error) {
 	if v.ALPN != "" {
 		s.ALPN = splitCSV(v.ALPN)
 	}
+	// VMess exporters use either an embedded object or a JSON string for extra.
+	extra := string(v.Extra)
+	if strings.HasPrefix(extra, `"`) {
+		if err := json.Unmarshal(v.Extra, &extra); err != nil {
+			return server.Server{}, fmt.Errorf("vmess: xhttp extra: %w", err)
+		}
+	}
+	if err := parseXHTTPOptions(&s, v.Mode, extra); err != nil {
+		return server.Server{}, fmt.Errorf("vmess: %w", err)
+	}
 	decodedFragment, _ := url.QueryUnescape(fragment)
 	s.Name = firstNonEmpty(v.PS, decodedFragment, s.Endpoint())
 	return s, nil
@@ -205,11 +220,33 @@ func parseTrojan(uri string) (server.Server, error) {
 	if v := q.Get("allowInsecure"); v == "1" || v == "true" {
 		s.AllowInsecure = true
 	}
+	if err := parseXHTTPOptions(&s, q.Get("mode"), q.Get("extra")); err != nil {
+		return server.Server{}, fmt.Errorf("trojan: %w", err)
+	}
 	s.Name = u.Fragment
 	if s.Name == "" {
 		s.Name = s.Endpoint()
 	}
 	return s, nil
+}
+
+// Query values have already been URL-decoded by net/url. In particular, do
+// not unescape extra a second time: its nested paths may contain literal %.
+func parseXHTTPOptions(s *server.Server, mode, extra string) error {
+	if s.Network != "xhttp" && s.Network != "splithttp" {
+		return nil
+	}
+	s.Network = "xhttp"
+	s.XHTTPMode = mode
+	if extra != "" {
+		if err := json.Unmarshal([]byte(extra), &s.XHTTPExtra); err != nil {
+			return fmt.Errorf("xhttp extra must be a JSON object: %w", err)
+		}
+		if s.XHTTPExtra == nil {
+			return errors.New("xhttp extra must be a JSON object")
+		}
+	}
+	return nil
 }
 
 func firstNonEmpty(vals ...string) string {

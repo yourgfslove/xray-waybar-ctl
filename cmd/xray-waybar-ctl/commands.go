@@ -242,6 +242,14 @@ func cmdList(_ context.Context) error {
 }
 
 func cmdTest(ctx context.Context) error {
+	// Testing temporarily changes TUN state. Keep watchdog and user-driven
+	// connection changes from racing the test and its saved results.
+	lock, err := acquireUserLock()
+	if err != nil {
+		return err
+	}
+	defer releaseWatchdogLock(lock)
+
 	lc, err := loadAll()
 	if err != nil {
 		return err
@@ -352,10 +360,17 @@ func cmdUseDir(ctx context.Context, step int) error {
 // merges the result into state.Results. It is the cheap, periodic
 // counterpart to `test` — meant to be driven by a 30s systemd timer.
 //
-// On purpose: ping never overwrites the URL-test latency. The real
-// HTTP-through-proxy number is more accurate; we only refresh Alive
-// (and stamp a fresh MeasuredAt so stale rows can be detected later).
+// TCP reachability is saved separately once a URL test exists. Until then,
+// including for legacy state without a source, TCP provides a provisional
+// result. A failed TCP ping can mark a proxy unreachable; a successful one
+// cannot erase a failed URL test or substitute its latency for URL latency.
 func cmdPing(ctx context.Context) error {
+	lock, err := acquireUserLock()
+	if err != nil {
+		return err
+	}
+	defer releaseWatchdogLock(lock)
+
 	lc, err := loadAll()
 	if err != nil {
 		return err
@@ -370,27 +385,29 @@ func cmdPing(ctx context.Context) error {
 	}
 	now := time.Now()
 	for _, r := range results {
-		prev := lc.state.Results[r.Server.Name]
-		latency := prev.Latency
-		if latency == 0 {
-			// First-time entry — seed with TCP latency until a real
-			// URL test runs.
-			latency = r.Latency
-		}
-		errStr := ""
-		if r.Error != nil {
-			errStr = r.Error.Error()
-		}
-		lc.state.Results[r.Server.Name] = store.TestResult{
-			Name:       r.Server.Name,
-			Latency:    latency,
-			Alive:      r.Alive,
-			Error:      errStr,
-			MeasuredAt: now,
-		}
+		lc.state.Results[r.Server.Name] = mergePingResult(lc.state.Results[r.Server.Name], r, now)
 	}
-	lc.state.TestedAt = now
 	return store.SaveState(lc.cfg.StateFile, lc.state)
+}
+
+func mergePingResult(prev store.TestResult, r pinger.Result, now time.Time) store.TestResult {
+	ping := &store.ProbeResult{Latency: r.Latency, Alive: r.Alive, MeasuredAt: now}
+	if r.Error != nil {
+		ping.Error = r.Error.Error()
+	}
+	prev.TCPPing = ping
+	prev.Name = r.Server.Name
+	result := ping
+	prev.Source = "tcp"
+	if prev.URLTest != nil && (ping.Alive || !prev.URLTest.Alive) {
+		result = prev.URLTest
+		prev.Source = "url"
+	}
+	prev.Latency = result.Latency
+	prev.Alive = result.Alive
+	prev.Error = result.Error
+	prev.MeasuredAt = result.MeasuredAt
+	return prev
 }
 
 // cmdMenu opens a walker --dmenu picker of cached servers. The first
@@ -710,9 +727,14 @@ func saveResults(lc *loadCtx, results []tester.Result) {
 			Latency:    r.Latency,
 			Alive:      r.Alive,
 			MeasuredAt: now,
+			Source:     "url",
+			TCPPing:    lc.state.Results[r.Server.Name].TCPPing,
 		}
 		if r.Error != nil {
 			tr.Error = r.Error.Error()
+		}
+		tr.URLTest = &store.ProbeResult{
+			Latency: tr.Latency, Alive: tr.Alive, Error: tr.Error, MeasuredAt: tr.MeasuredAt,
 		}
 		lc.state.Results[r.Server.Name] = tr
 	}

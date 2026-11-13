@@ -28,11 +28,23 @@ func (c *Cache) Age() time.Duration { return time.Since(c.FetchedAt) }
 
 // TestResult is a single URL-test measurement for one server.
 type TestResult struct {
-	Name      string        `json:"name"`
-	Latency   time.Duration `json:"latency_ns"`
-	Alive     bool          `json:"alive"`
-	Error     string        `json:"error,omitempty"`
-	MeasuredAt time.Time    `json:"measured_at"`
+	Name       string        `json:"name"`
+	Latency    time.Duration `json:"latency_ns"`
+	Alive      bool          `json:"alive"`
+	Error      string        `json:"error,omitempty"`
+	MeasuredAt time.Time     `json:"measured_at"`
+	Source     string        `json:"source,omitempty"` // "url" or "tcp"; empty in legacy state
+	URLTest    *ProbeResult  `json:"url_test,omitempty"`
+	TCPPing    *ProbeResult  `json:"tcp_ping,omitempty"`
+}
+
+// ProbeResult records TCP reachability separately from working proxy access.
+// An open TCP port must not turn a failed URL test into a healthy proxy.
+type ProbeResult struct {
+	Latency    time.Duration `json:"latency_ns"`
+	Alive      bool          `json:"alive"`
+	Error      string        `json:"error,omitempty"`
+	MeasuredAt time.Time     `json:"measured_at"`
 }
 
 // State captures runtime information: which server is currently active,

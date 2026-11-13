@@ -321,6 +321,14 @@ func buildStreamSettings(s server.Server) (*StreamSettings, error) {
 		ss.WSSettings = ws
 	case "grpc":
 		ss.GRPCSettings = &GRPCSettings{ServiceName: s.ServiceName}
+	case "xhttp", "splithttp":
+		ss.Network = "xhttp"
+		ss.XHTTPSettings = &XHTTPSettings{
+			Path:  defaultStr(s.Path, "/"),
+			Host:  s.Host,
+			Mode:  defaultStr(s.XHTTPMode, "auto"),
+			Extra: s.XHTTPExtra,
+		}
 	default:
 		return nil, fmt.Errorf("xrayconfig: unsupported network %q", ss.Network)
 	}

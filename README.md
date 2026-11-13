@@ -7,7 +7,7 @@ CLI на Go, который управляет `xray-core` и отдаёт ст�
 ## Возможности
 
 - Скачивает подписку (base64 → список `vless://` / `vmess://` / `trojan://`).
-- Парсит VLESS+REALITY, TLS, WS, gRPC.
+- Парсит VLESS+REALITY, TLS, WS, gRPC, XHTTP (включая имя `splithttp`).
 - Параллельно URL-тестит серверы и выбирает живой с минимальной латентностью
   (или первый из заданного `priority`).
 - Запускает xray-core как detached процесс с PID-файлом, ждёт открытия SOCKS5 порта.
@@ -97,6 +97,35 @@ xray-waybar-ctl use DE-2    # подключиться к конкретному
 xray-waybar-ctl status      # JSON для Waybar
 ```
 
+### XHTTP
+
+В ссылках `vless://` / `trojan://` поддерживаются `type=xhttp`, `path`, `host`,
+`mode` и `extra` (JSON-объект, закодированный как URL-параметр).
+В JSON-ссылках `vmess://` — `net: "xhttp"` и те же поля; `extra` может быть
+объектом или строкой с JSON. Параметры `extra`, включая `xmux` и
+`downloadSettings`, сохраняются в кэше и передаются xray-core без изменений.
+Без `path` используется `/`, без `mode` — `auto`. TLS и REALITY настраиваются
+обычными параметрами ссылки. В Clash YAML из `xhttp-opts` читаются `path`,
+`host`, `mode` и `headers`.
+
+Пример ссылки (UUID и адрес нужно заменить своими):
+
+```text
+vless://00000000-0000-0000-0000-000000000001@vpn.example.com:443?encryption=none&security=tls&sni=vpn.example.com&type=xhttp&path=%2Fvpn&mode=auto#XHTTP
+```
+
+После обновления клиента пересобери его и обнови подписку, чтобы новые поля
+попали в кэш:
+
+```sh
+make install
+xray-waybar-ctl update
+xray-waybar-ctl reconnect
+```
+
+Установленный `xray-core` также должен поддерживать XHTTP:
+[описание транспорта в Project X](https://xtls.github.io/en/config/transports/xhttp.html).
+
 ## System-wide режим (весь трафик через VPN)
 
 По умолчанию xray-waybar-ctl поднимает только локальный SOCKS5 на `127.0.0.1:1080`,
@@ -166,6 +195,15 @@ make install-monitor
 - `xray-waybar-geo.timer` — раз в сутки обновляет `geoip.dat` /
   `geosite.dat` из `roscomvpn-geo*` GitHub Releases.
 
+`test` проверяет HTTP-запрос через прокси, а фоновый `ping` — только
+доступность TCP-порта. Успешный TCP-пинг не отменяет ошибку последнего
+URL-теста: сервер с открытым портом может не пропускать трафик через
+TLS/REALITY/XHTTP. Результаты сохраняются отдельно в `url_test` и `tcp_ping`
+в `state.json`; поля `alive`, `latency_ns` и `error` отражают итоговый статус
+для панели. До первого URL-теста отображается TCP-результат. В старом
+`state.json` источник проверки неизвестен — запусти `xray-waybar-ctl test`
+после обновления, чтобы получить полноценные результаты.
+
 Снять: `make uninstall-monitor`.
 
 Логи watchdog'а:
@@ -222,6 +260,13 @@ CLI работает.
 make test       # юнит-тесты
 make vet
 make build      # выдаёт ./xray-waybar-ctl
+```
+
+Проверка реального HTTP-запроса через локальные XHTTP и XHTTP+REALITY
+туннели (нужен `xray` в `$PATH`, внешняя сеть не используется):
+
+```sh
+XRAY_INTEGRATION=1 go test ./internal/tester -run TestXHTTPTunnel -v
 ```
 
 ## Лицензия

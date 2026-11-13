@@ -66,6 +66,7 @@ type StreamSettings struct {
 	TCPSettings     *TCPSettings     `json:"tcpSettings,omitempty"`
 	WSSettings      *WSSettings      `json:"wsSettings,omitempty"`
 	GRPCSettings    *GRPCSettings    `json:"grpcSettings,omitempty"`
+	XHTTPSettings   *XHTTPSettings   `json:"xhttpSettings,omitempty"`
 	Sockopt         *Sockopt         `json:"sockopt,omitempty"`
 }
 
@@ -105,6 +106,13 @@ type WSSettings struct {
 
 type GRPCSettings struct {
 	ServiceName string `json:"serviceName,omitempty"`
+}
+
+type XHTTPSettings struct {
+	Path  string                     `json:"path"`
+	Host  string                     `json:"host,omitempty"`
+	Mode  string                     `json:"mode"`
+	Extra map[string]json.RawMessage `json:"extra,omitempty"`
 }
 
 // VLESS

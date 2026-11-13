@@ -2,7 +2,10 @@
 // xray config generation, the URL tester and the CLI.
 package server
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // Server is a normalized proxy server record. It is decoupled from any
 // specific URI scheme: vless / vmess / trojan URIs are parsed into this
@@ -22,10 +25,10 @@ type Server struct {
 	Network  string `json:"network"`
 	Security string `json:"security"`
 
-	SNI         string   `json:"sni,omitempty"`
-	Fingerprint string   `json:"fingerprint,omitempty"`
-	ALPN        []string `json:"alpn,omitempty"`
-	AllowInsecure bool   `json:"allow_insecure,omitempty"`
+	SNI           string   `json:"sni,omitempty"`
+	Fingerprint   string   `json:"fingerprint,omitempty"`
+	ALPN          []string `json:"alpn,omitempty"`
+	AllowInsecure bool     `json:"allow_insecure,omitempty"`
 
 	// REALITY
 	PublicKey string `json:"public_key,omitempty"`
@@ -33,10 +36,14 @@ type Server struct {
 	SpiderX   string `json:"spider_x,omitempty"`
 
 	// transport-specific
-	Path        string `json:"path,omitempty"`         // ws / http
+	Path        string `json:"path,omitempty"`         // ws / http / xhttp
 	Host        string `json:"host,omitempty"`         // header Host
 	ServiceName string `json:"service_name,omitempty"` // grpc
 	HeaderType  string `json:"header_type,omitempty"`  // tcp/none, http
+	XHTTPMode   string `json:"xhttp_mode,omitempty"`
+	// Preserve arbitrary Xray extra options, including nested downloadSettings,
+	// without converting JSON numbers to float64 during subscription parsing.
+	XHTTPExtra map[string]json.RawMessage `json:"xhttp_extra,omitempty"`
 
 	Raw string `json:"raw"`
 }

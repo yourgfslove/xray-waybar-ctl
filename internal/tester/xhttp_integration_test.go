@@ -34,6 +34,10 @@ func TestXHTTPTunnel(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer target.Close()
+	targetHost, targetPort, err := net.SplitHostPort(strings.TrimPrefix(target.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	// REALITY needs a TLS target. Keep that target local as well.
 	tlsTarget := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
@@ -46,18 +50,31 @@ func TestXHTTPTunnel(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, security := range []string{"none", "reality"} {
-		t.Run(security, func(t *testing.T) {
+	for _, test := range []struct {
+		name, security   string
+		separateDownload bool
+	}{{"none", "none", false}, {"reality", "reality", false}, {"separate_download", "none", true}} {
+		t.Run(test.name, func(t *testing.T) {
 			port := unusedTCPPort(t)
 			s := server.Server{
 				Protocol: "vless", Address: "127.0.0.1", Port: port, UUID: uuid,
-				Network: "xhttp", Path: "/integration", Security: security,
+				Network: "xhttp", Path: "/integration", Security: test.security,
 			}
 			stream := map[string]any{
-				"network": "xhttp", "security": security,
+				"network": "xhttp", "security": test.security,
 				"xhttpSettings": map[string]any{"path": s.Path},
 			}
-			if security == "reality" {
+			if test.separateDownload {
+				download, err := json.Marshal(map[string]any{
+					"address": s.Address, "port": port, "network": "xhttp",
+					"xhttpSettings": map[string]any{"path": s.Path},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				s.XHTTPExtra = map[string]json.RawMessage{"downloadSettings": download}
+			}
+			if test.security == "reality" {
 				s.SNI = "example.com"
 				s.Fingerprint = "chrome"
 				s.PublicKey = base64.RawURLEncoding.EncodeToString(key.PublicKey().Bytes())
@@ -75,7 +92,12 @@ func TestXHTTPTunnel(t *testing.T) {
 					"settings":       map[string]any{"clients": []any{map[string]any{"id": uuid}}, "decryption": "none"},
 					"streamSettings": stream,
 				}},
-				"outbounds": []any{map[string]any{"protocol": "freedom"}},
+				"outbounds": []any{map[string]any{
+					"protocol": "freedom",
+					"settings": map[string]any{"finalRules": []any{map[string]any{
+						"action": "allow", "network": "tcp", "ip": []string{targetHost}, "port": targetPort,
+					}}},
+				}},
 			}
 			raw, err := json.Marshal(cfg)
 			if err != nil {
@@ -110,7 +132,7 @@ func TestXHTTPTunnel(t *testing.T) {
 			})
 			if !results[0].Alive {
 				logs, _ := os.ReadFile(logPath)
-				t.Fatalf("HTTP through XHTTP/%s failed: %v\n%s", security, results[0].Error, logs)
+				t.Fatalf("HTTP through XHTTP failed: %v\n%s", results[0].Error, logs)
 			}
 		})
 	}

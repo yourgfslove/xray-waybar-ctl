@@ -3,6 +3,8 @@ package xrayconfig
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"strconv"
 
 	"github.com/yourgfslove/xray-waybar-ctl/internal/routing"
 	"github.com/yourgfslove/xray-waybar-ctl/internal/server"
@@ -58,6 +60,11 @@ func Generate(s server.Server, opts Options) ([]byte, error) {
 			proxy.StreamSettings = &StreamSettings{}
 		}
 		proxy.StreamSettings.Sockopt = &Sockopt{Mark: opts.SOMark}
+		if xhttp := proxy.StreamSettings.XHTTPSettings; xhttp != nil {
+			if err := xhttp.markDownload(opts.SOMark); err != nil {
+				return nil, fmt.Errorf("xrayconfig: XHTTP downloadSettings: %w", err)
+			}
+		}
 	}
 	socksSettings, _ := json.Marshal(socksInboundSettings{Auth: "noauth", UDP: true})
 
@@ -92,6 +99,44 @@ func Generate(s server.Server, opts Options) ([]byte, error) {
 	}
 
 	return json.MarshalIndent(out, "", "  ")
+}
+
+// A separate XHTTP download stream has its own socket options. Mark it to
+// keep that connection out of the TUN, too.
+func (x *XHTTPSettings) markDownload(mark int) error {
+	raw, ok := x.Extra["downloadSettings"]
+	if !ok {
+		return nil
+	}
+	var download map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &download); err != nil {
+		return err
+	}
+	if download == nil {
+		return nil
+	}
+	var sockopt map[string]json.RawMessage
+	if raw := download["sockopt"]; raw != nil {
+		if err := json.Unmarshal(raw, &sockopt); err != nil {
+			return err
+		}
+	}
+	if sockopt == nil {
+		sockopt = make(map[string]json.RawMessage)
+	}
+	sockopt["mark"] = json.RawMessage(strconv.Itoa(mark))
+	markedSockopt, err := json.Marshal(sockopt)
+	if err != nil {
+		return err
+	}
+	download["sockopt"] = markedSockopt
+	markedDownload, err := json.Marshal(download)
+	if err != nil {
+		return err
+	}
+	x.Extra = maps.Clone(x.Extra)
+	x.Extra["downloadSettings"] = markedDownload
+	return nil
 }
 
 // renderRouting turns Options into the three pieces Generate plugs in:

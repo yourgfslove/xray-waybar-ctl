@@ -40,8 +40,8 @@ func TestXHTTPSubscriptionToConfig(t *testing.T) {
 	}{
 		{"vless-tls", "vless://" + uuid + "@vpn.example.com:443?type=xhttp&security=tls&sni=vpn.example.com" + query, "tls", "/vpn", "cdn.example.com", "stream-up", extra},
 		{"vless-reality", "vless://" + uuid + "@vpn.example.com:443?type=xhttp&security=reality&sni=vpn.example.com&pbk=J_c2B4hmAaiRlwyCjrJgU7DntDiBmULe1FrMbN1uNE0&sid=deadbeef&fp=chrome" + query, "reality", "/vpn", "cdn.example.com", "stream-up", extra},
-		{"splithttp-defaults", "vless://" + uuid + "@vpn.example.com:80?type=splithttp", "", "/", "", "auto", ""},
-		{"packet-up", "vless://" + uuid + "@vpn.example.com:80?type=xhttp&mode=packet-up", "", "/", "", "packet-up", ""},
+		{"splithttp-defaults", "vless://" + uuid + "@127.0.0.1:80?type=splithttp", "", "/", "", "auto", ""},
+		{"packet-up", "vless://" + uuid + "@127.0.0.1:80?type=xhttp&mode=packet-up", "", "/", "", "packet-up", ""},
 		{"stream-one", "vless://" + uuid + "@vpn.example.com:443?type=xhttp&security=tls&mode=stream-one", "tls", "/", "", "stream-one", ""},
 		{"trojan", "trojan://password@vpn.example.com:443?type=xhttp&sni=vpn.example.com" + query, "tls", "/vpn", "cdn.example.com", "stream-up", extra},
 		{"vmess-object", vmess(json.RawMessage(extra)), "tls", "/vpn", "cdn.example.com", "stream-up", extra},
@@ -149,6 +149,54 @@ func TestXHTTPSubscriptionToConfig(t *testing.T) {
 			defer cancel()
 			if output, err := exec.CommandContext(ctx, xray, "run", "-test", "-config", configPath).CombinedOutput(); err != nil {
 				t.Fatalf("xray rejected config: %v\n%s", err, output)
+			}
+		})
+	}
+}
+
+func TestXHTTPDownloadUsesSystemWideSocketMark(t *testing.T) {
+	const extra = `{"downloadSettings":{"address":"down.example.com","port":443,"network":"xhttp","security":"tls","sockopt":{"mark":7,"tcpNoDelay":true}},"noGRPCHeader":true}`
+	s, err := subscription.ParseURI("vless://00000000-0000-0000-0000-000000000001@vpn.example.com:443?type=xhttp&security=tls&extra=" + url.QueryEscape(extra))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var original map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(extra), &original); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name string
+		mark int
+		want int
+	}{{"system_wide", 0x29a, 0x29a}, {"proxy_only", 0, 7}} {
+		t.Run(test.name, func(t *testing.T) {
+			raw, err := xrayconfig.Generate(s, xrayconfig.Options{SocksPort: 1080, SOMark: test.mark})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var config struct {
+				Outbounds []xrayconfig.Outbound `json:"outbounds"`
+			}
+			if err := json.Unmarshal(raw, &config); err != nil {
+				t.Fatal(err)
+			}
+			xhttp := config.Outbounds[0].StreamSettings.XHTTPSettings.Extra
+			var download struct {
+				Address string `json:"address"`
+				Sockopt struct {
+					Mark       int  `json:"mark"`
+					TCPNoDelay bool `json:"tcpNoDelay"`
+				} `json:"sockopt"`
+			}
+			if err := json.Unmarshal(xhttp["downloadSettings"], &download); err != nil {
+				t.Fatal(err)
+			}
+			if download.Sockopt.Mark != test.want || !download.Sockopt.TCPNoDelay || download.Address != "down.example.com" || string(xhttp["noGRPCHeader"]) != "true" {
+				t.Fatalf("unexpected extra: %s", xhttp["downloadSettings"])
+			}
+			if !reflect.DeepEqual(s.XHTTPExtra, original) {
+				t.Fatal("cached XHTTP options were modified")
 			}
 		})
 	}
